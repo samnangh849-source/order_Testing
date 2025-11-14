@@ -183,8 +183,15 @@ async def show_main_menu(chat_id: int, context: ContextTypes.DEFAULT_TYPE, text:
 
 async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """ស្តាប់រាល់សារទាំងអស់ក្នុង Group ដើម្បីចាប់យកប្រតិបត្តិការ"""
+
+    # --- (*** បានកែសម្រួលនៅទីនេះ ***) ---
+    # Code សម្រាប់ Debugging (តេស្ត)
     if not update.message or not update.message.text:
         return
+        
+    logger.info(f"DEBUG: Bot បានទទួលសារថ្មីក្នុង Chat ID {update.message.chat_id}")
+    logger.info(f"DEBUG: ខ្លឹមសារសារ: {update.message.text}")
+    # --- (*** ចប់ Code សម្រាប់ Debugging ***) ---
 
     text = update.message.text
     chat_id = update.message.chat_id
@@ -206,6 +213,7 @@ async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dt_obj = datetime.strptime(date_str, DATE_FORMAT_IN)
             
             # បន្ថែមទៅ database
+            logger.info("DEBUG: កំពុងបញ្ជូនទិន្នន័យទៅ Firestore...")
             await add_transaction_db(chat_id, amount, currency, dt_obj)
             
         except Exception as e:
