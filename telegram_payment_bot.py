@@ -34,10 +34,10 @@ COLLECTION_NAME = "transactions" # ឈ្មោះ Collection ក្នុង Fi
 CAMBODIA_TIME_OFFSET = 7
 
 # --- កូដ Regex និងទម្រង់កាលបរិច្ឆេទ ---
-# កែសម្រួល TRANSACTION_REGEX សម្រាប់ទម្រង់សារថ្មី៖
-# Received 29.00 USD from PHEARA TAK,ABA Bank by KHQR,on 19-Nov-2025 08:08AM, ...
-# ប្រើ .*?on\s* ដើម្បីចាប់យកអក្សរនៅកណ្តាល និងត្រូវនឹង 'on' ដែលប្រហែលគ្មាន Space បន្ទាប់ពី comma
-TRANSACTION_REGEX = r"Received ([\d\.,]+) (USD|KHR).*?on\s*(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}[AP]M)"
+# (*** បានកែសម្រួល Regex ដើម្បីធានាថាវាចាប់យកសារបានត្រឹមត្រូវ ***)
+# ប្រើ ^\s* ដើម្បីចាប់យក Space/Newline នៅដើមសារ (Safe Check)
+# ប្រើ .*?on\s* ដើម្បីចាប់យកអក្សរនៅកណ្តាល និងត្រូវនឹង 'on' ដែលប្រហែលគ្មាន Space
+TRANSACTION_REGEX = r"^\s*Received ([\d\.,]+) (USD|KHR).*?on\s*(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}[AP]M)"
 DATE_FORMAT_IN = "%d-%b-%Y %I:%M%p" 
 DATE_FORMAT_QUERY = "%Y-%m-%d"
 DATETIME_FORMAT_QUERY = "%Y-%m-%d %H:%M"
@@ -58,7 +58,10 @@ TIME_FORMAT_QUERY = "%H:%M" # សម្រាប់បញ្ចូលម៉ោ�
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+# កំណត់កម្រិត Log ទៅ DEBUG សម្រាប់ Firestore Query
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG) 
+
 
 # Global variable សម្រាប់ Firestore client
 db = None
@@ -118,6 +121,7 @@ async def add_transaction_db(chat_id: int, amount: float, currency: str, dt_obj:
 
 def _get_sum_sync(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
     """
+    (*** កូដត្រូវបានបន្ថែម Logging ដើម្បីឆែកមើល Indexing/Query Range ***)
     Sync function សម្រាប់បូកសរុប (រត់ក្នុង thread)
     """
     totals = {'USD': 0.0, 'KHR': 0.0}
@@ -140,6 +144,7 @@ def _get_sum_sync(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
             doc_count += 1
             data = doc.to_dict()
             
+            # Log ទិន្នន័យដែលរកឃើញ
             logger.debug(f"FOUND DOC #{doc_count}: {data}") 
             
             if 'currency' in data and 'amount' in data:
@@ -203,7 +208,7 @@ async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text
     chat_id = update.message.chat_id
     
-    # ប្រើ TRANSACTION_REGEX ដែលបានកែសម្រួល
+    # ប្រើ TRANSACTION_REGEX ដែលបានកែសម្រួលចុងក្រោយ
     match = re.search(TRANSACTION_REGEX, text, re.IGNORECASE)
     
     if match:
@@ -355,25 +360,21 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # --- មុខងារសម្រាប់ដោះស្រាយជម្រើស Custom Range ---
 async def handle_custom_range_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    (*** បានកែសម្រួល: បន្ថែម Logging សម្រាប់ Debug ប៊ូតុង ***)
-    ដោះស្រាយប៊ូតុង 'ក្នុងថ្ងៃនេះ' vs 'កំណត់ខ្លួនឯង'
-    """
+    """ដោះស្រាយប៊ូតុង 'ក្នុងថ្ងៃនេះ' vs 'កំណត់ខ្លួនឯង'"""
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    logger.info(f"DEBUG: handle_custom_range_choice received data: {data}") # Log ដើម្បីពិនិត្យមើល
+    logger.info(f"DEBUG: handle_custom_range_choice received data: {data}")
 
     if data == 'today_range':
         await query.edit_message_text(text=f"⌚️ សូមវាយបញ្ចូលម៉ោងចាប់ផ្ដើម (ទម្រង់ HH:MM ឧ: 08:00):")
         return GET_TODAY_START_TIME 
     
     elif data == 'manual_range':
-        # ប៊ូតុងនេះហើយដែលអ្នកមានបញ្ហា
         await query.edit_message_text(text=f"🗓️ សូមវាយបញ្ចូល ថ្ងៃ/ម៉ោង ចាប់ផ្ដើម (ទម្រង់ YYYY-MM-DD HH:MM ឧ: 2025-11-12 08:00):")
         logger.info("DEBUG: Transitioning to GET_CUSTOM_START from manual_range.")
-        return GET_CUSTOM_START # ត្រូវប្រាកដថា State នេះបានត្រឡប់ត្រឹមត្រូវ
+        return GET_CUSTOM_START 
 
 # --- មុខងារសម្រាប់ដោះស្រាយម៉ោង 'ក្នុងថ្ងៃនេះ' ---
 async def handle_today_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -456,7 +457,7 @@ async def handle_get_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
         month_end_date = next_month - timedelta(days=next_month.day)
         month_end_dt = datetime.combine(month_end_date, datetime.max.time())
         
-        totals = await get_sum_db(chat_id, month_start_dt, month_end_dt)
+        totals = await get_sum_db(update.message.chat_id, month_start_dt, month_end_dt)
         prefix = f"សរុបទឹកប្រាក់ (ខែ {month_str})"
         message = format_totals_message(prefix, totals)
         
@@ -604,9 +605,9 @@ async def main_async():
         
     finally:
         logger.info("Shutting down...")
-        await runner.cleanup()
         await application.updater.stop()
         await application.stop()
+        await runner.cleanup() # ត្រូវតែ Clean up ក្រោយ application.stop()
 
 # --- របៀបរត់ Main ---
 if __name__ == "__main__":
@@ -614,6 +615,7 @@ if __name__ == "__main__":
         asyncio.run(main_async())
     except RuntimeError as e:
         if "can't register atexit" in str(e):
+             # នេះជា Error ដែលទាក់ទងនឹង Render/Asyncio Clean up មិនមែនជាបញ្ហាមុខងារទេ
              logger.warning("Ignoring atexit error during Render shutdown.")
         else:
              logger.critical(f"Critical asyncio error: {e}")
