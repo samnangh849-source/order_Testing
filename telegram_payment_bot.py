@@ -456,7 +456,7 @@ async def handle_get_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
         month_end_date = next_month - timedelta(days=next_month.day)
         month_end_dt = datetime.combine(month_end_date, datetime.max.time())
         
-        totals = await get_sum_db(update.message.chat_id, month_start_dt, month_end_dt)
+        totals = await get_sum_db(chat_id, month_start_dt, month_end_dt)
         prefix = f"សរុបទឹកប្រាក់ (ខែ {month_str})"
         message = format_totals_message(prefix, totals)
         
@@ -526,7 +526,7 @@ async def health_check(request):
     logger.info("Render health check successful.")
     return web.Response(text="Bot is running and healthy!")
 
-# --- មុខងារ Main ---
+# --- មុខងារ Main ត្រូវបានកែសម្រួលដើម្បីដោះស្រាយ Conflict Error ---
 
 async def main_async():
     """ចាប់ផ្ដើម Bot និង Web Server ក្នុងពេលតែមួយ"""
@@ -571,9 +571,16 @@ async def main_async():
     try:
         logger.info("Initializing Bot...")
         await application.initialize()
+        
+        # *** ការកែសម្រួលដើម្បីដោះស្រាយ Conflict Error ***
+        # លុប Webhook ចាស់ចេញពី Server Telegram មុននឹងចាប់ផ្តើម Polling
+        await application.bot.delete_webhook()
+        logger.info("Successfully deleted old webhooks.")
+        # **********************************************
+
         await application.start()
         await application.updater.start_polling()
-        logger.info("Bot is starting...")
+        logger.info("Bot is starting polling...")
     except Exception as e:
         logger.error(f"Failed to start bot polling: {e}")
         return
