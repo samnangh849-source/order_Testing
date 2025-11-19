@@ -9,7 +9,7 @@ import asyncio
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# --- (*** បានកែសម្រួល ***) Import សម្រាប់ Web Server ---
+# --- Import សម្រាប់ Web Server ---
 from aiohttp import web
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -25,10 +25,7 @@ from telegram.ext import (
 
 # --- កំណត់រចនាសម្ព័ន្ធ (Configuration) ---
 
-# Bot នឹងអាន TOKEN ពី Environment Variable លើ Server
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-
-# យក Firebase credentials ពី Environment Variable
 FIREBASE_CREDENTIALS_JSON = os.environ.get("FIREBASE_CREDENTIALS_JSON")
 
 COLLECTION_NAME = "transactions" # ឈ្មោះ Collection ក្នុង Firestore
@@ -37,7 +34,10 @@ COLLECTION_NAME = "transactions" # ឈ្មោះ Collection ក្នុង Fi
 CAMBODIA_TIME_OFFSET = 7
 
 # --- កូដ Regex និងទម្រង់កាលបរិច្ឆេទ ---
-TRANSACTION_REGEX = r"Received ([\d\.,]+) (USD|KHR).* on (\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}[AP]M)"
+# កែសម្រួល TRANSACTION_REGEX សម្រាប់ទម្រង់សារថ្មី៖
+# Received 29.00 USD from PHEARA TAK,ABA Bank by KHQR,on 19-Nov-2025 08:08AM, ...
+# ប្រើ .*?on\s* ដើម្បីចាប់យកអក្សរនៅកណ្តាល និងត្រូវនឹង 'on' ដែលប្រហែលគ្មាន Space បន្ទាប់ពី comma
+TRANSACTION_REGEX = r"Received ([\d\.,]+) (USD|KHR).*?on\s*(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}[AP]M)"
 DATE_FORMAT_IN = "%d-%b-%Y %I:%M%p" 
 DATE_FORMAT_QUERY = "%Y-%m-%d"
 DATETIME_FORMAT_QUERY = "%Y-%m-%d %H:%M"
@@ -101,12 +101,10 @@ def _add_transaction_sync(chat_id: int, amount: float, currency: str, dt_obj: da
     """Sync function សម្រាប់បន្ថែមទិន្នន័យ (រត់ក្នុង thread)"""
     try:
         data = {
-            # ប្រើ str(chat_id) ជំនួស int ដើម្បីធានាថា Data Type ដូចគ្នានៅក្នុង DB
-            # តែបើ DB ដើមប្រើ int, គួរតែរក្សា int
-            "chat_id": chat_id, # រក្សាជា int តាមកូដដើម
+            "chat_id": chat_id, 
             "amount": amount,
             "currency": currency,
-            "timestamp": dt_obj # Firestore អាចប្រើ datetime object ផ្ទាល់
+            "timestamp": dt_obj 
         }
         db.collection(COLLECTION_NAME).add(data)
         logger.info(f"Logged to Firestore for chat {chat_id}: {amount} {currency}")
@@ -120,18 +118,17 @@ async def add_transaction_db(chat_id: int, amount: float, currency: str, dt_obj:
 
 def _get_sum_sync(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
     """
-    (*** បានកែសម្រួល: បន្ថែម Logging សម្រាប់ Debugging ***)
     Sync function សម្រាប់បូកសរុប (រត់ក្នុង thread)
     """
     totals = {'USD': 0.0, 'KHR': 0.0}
     
-    # ជំហានទី 1: Log Query Range
+    # Log Query Range
     logger.info(f"DEBUG QUERY: ChatID={chat_id}, Start={start_dt.strftime(DATETIME_FORMAT_QUERY)}, End={end_dt.strftime(DATETIME_FORMAT_QUERY)}")
 
     try:
         collection_ref = db.collection(COLLECTION_NAME)
         
-        # បង្កើត query
+        # បង្កើត query (តម្រូវការ Index)
         query = collection_ref.where("chat_id", "==", chat_id) \
                               .where("timestamp", ">=", start_dt) \
                               .where("timestamp", "<=", end_dt)
@@ -139,12 +136,10 @@ def _get_sum_sync(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
         results = query.stream()
         
         doc_count = 0
-        # ជំហានទី 2: បូកសរុបលទ្ធផល (client-side)
         for doc in results:
             doc_count += 1
             data = doc.to_dict()
             
-            # Log ទិន្នន័យដែលរកឃើញ (ជួយពិនិត្យមើលថា query ដើរ ឬអត់)
             logger.debug(f"FOUND DOC #{doc_count}: {data}") 
             
             if 'currency' in data and 'amount' in data:
@@ -158,7 +153,7 @@ def _get_sum_sync(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
     except Exception as e:
         # បង្ហាញ Error ក្នុង Logs ក្នុងករណី Index ខ្វះខាត
         logger.error(f"CRITICAL FIREBASE ERROR (Check Index!): {e}")
-        return totals # បង្វែរ 0.0
+        return totals 
 
 async def get_sum_db(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
     """បូកសរុបទឹកប្រាក់ពី Firestore (async wrapper)"""
@@ -169,7 +164,7 @@ async def get_sum_db(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict
         return {'USD': 0.0, 'KHR': 0.0}
 
 
-# --- មុខងារ Bot Handlers (បានកែសម្រួល Timezone) ---
+# --- មុខងារ Bot Handlers ---
 
 def format_totals_message(prefix: str, totals: dict) -> str:
     """រៀបចំទម្រង់សារឆ្លើយតបសម្រាប់ USD និង KHR"""
@@ -208,6 +203,7 @@ async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text
     chat_id = update.message.chat_id
     
+    # ប្រើ TRANSACTION_REGEX ដែលបានកែសម្រួល
     match = re.search(TRANSACTION_REGEX, text, re.IGNORECASE)
     
     if match:
@@ -218,17 +214,15 @@ async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE)
             currency = match.group(2).upper()
             date_str = match.group(3)
             
-            # បម្លែងទម្រង់កាលបរិច្ឆេទ (នេះនៅតែជា Naive Datetime)
             dt_obj = datetime.strptime(date_str, DATE_FORMAT_IN)
             
-            # បន្ថែមទៅ database
             logger.info(f"DEBUG: កំពុងបញ្ជូនទិន្នន័យទៅ Firestore: {amount} {currency} at {dt_obj}")
             await add_transaction_db(chat_id, amount, currency, dt_obj)
             
         except Exception as e:
             logger.error(f"Failed to parse or add transaction: {e}\nText: {text}")
 
-# --- មុខងារ Command /sum មិនបាច់កែសម្រួល Timezone ព្រោះវាជា Input របស់ User ---
+# --- មុខងារ Command /sum ---
 async def handle_sum_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """ដោះស្រាយ Command /sum ជាមួយ arguments"""
     if not context.args:
@@ -304,10 +298,7 @@ def make_custom_range_keyboard():
     ])
 
 async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    (*** បានកែសម្រួល: បន្ថែម Timezone Logic សម្រាប់ Today និង This Month ***)
-    ដោះស្រាយនៅពេលអ្នកប្រើចុចប៊ូតុង Inline
-    """
+    """ដោះស្រាយនៅពេលអ្នកប្រើចុចប៊ូតុង Inline (Timezone Handled)"""
     query = update.callback_query
     await query.answer() 
     data = query.data
@@ -320,7 +311,6 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == 'sum_today':
         await query.edit_message_text(text="... 🗓️ កំពុងគណនាបូកតាមថ្ងៃ (Today) ...")
         
-        # ប្រើ today របស់កម្ពុជា
         start_dt = datetime.combine(today, datetime.min.time())
         end_dt = datetime.combine(today, datetime.max.time())
         
@@ -334,7 +324,6 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data == 'sum_this_month':
         await query.edit_message_text(text="... 📅 កំពុងគណនាបូកតាមខែ (This Month) ...")
 
-        # ប្រើ today របស់កម្ពុជា
         start_dt_date = today.replace(day=1) 
         start_dt = datetime.combine(start_dt_date, datetime.min.time()) 
         
@@ -364,20 +353,27 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
         
     return ConversationHandler.END
 
-# --- មុខងារសម្រាប់ដោះស្រាយជម្រើស Custom Range (មិនមានការកែប្រែ) ---
+# --- មុខងារសម្រាប់ដោះស្រាយជម្រើស Custom Range ---
 async def handle_custom_range_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ដោះស្រាយប៊ូតុង 'ក្នុងថ្ងៃនេះ' vs 'កំណត់ខ្លួនឯង'"""
+    """
+    (*** បានកែសម្រួល: បន្ថែម Logging សម្រាប់ Debug ប៊ូតុង ***)
+    ដោះស្រាយប៊ូតុង 'ក្នុងថ្ងៃនេះ' vs 'កំណត់ខ្លួនឯង'
+    """
     query = update.callback_query
     await query.answer()
     data = query.data
 
+    logger.info(f"DEBUG: handle_custom_range_choice received data: {data}") # Log ដើម្បីពិនិត្យមើល
+
     if data == 'today_range':
         await query.edit_message_text(text=f"⌚️ សូមវាយបញ្ចូលម៉ោងចាប់ផ្ដើម (ទម្រង់ HH:MM ឧ: 08:00):")
-        return GET_TODAY_START_TIME
+        return GET_TODAY_START_TIME 
     
     elif data == 'manual_range':
+        # ប៊ូតុងនេះហើយដែលអ្នកមានបញ្ហា
         await query.edit_message_text(text=f"🗓️ សូមវាយបញ្ចូល ថ្ងៃ/ម៉ោង ចាប់ផ្ដើម (ទម្រង់ YYYY-MM-DD HH:MM ឧ: 2025-11-12 08:00):")
-        return GET_CUSTOM_START
+        logger.info("DEBUG: Transitioning to GET_CUSTOM_START from manual_range.")
+        return GET_CUSTOM_START # ត្រូវប្រាកដថា State នេះបានត្រឡប់ត្រឹមត្រូវ
 
 # --- មុខងារសម្រាប់ដោះស្រាយម៉ោង 'ក្នុងថ្ងៃនេះ' ---
 async def handle_today_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -395,16 +391,12 @@ async def handle_today_start_time(update: Update, context: ContextTypes.DEFAULT_
         return GET_TODAY_START_TIME
 
 async def handle_today_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    (*** បានកែសម្រួល: ប្រើ today របស់កម្ពុជា ***)
-    គណនាបូកសរុប (ក្នុងថ្ងៃនេះ)
-    """
+    """គណនាបូកសរុប (ក្នុងថ្ងៃនេះ)"""
     try:
         end_time_str = update.message.text
         end_time_obj = datetime.strptime(end_time_str, TIME_FORMAT_QUERY).time()
         start_time_obj = context.user_data['today_start_time']
         
-        # គណនាម៉ោងបច្ចុប្បន្ននៅកម្ពុជា (UTC+7)
         kh_now = datetime.utcnow() + timedelta(hours=CAMBODIA_TIME_OFFSET)
         today = kh_now.date()
         
@@ -460,7 +452,6 @@ async def handle_get_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
         month_str = update.message.text
         month_start_dt = datetime.strptime(month_str, "%Y-%m")
         
-        # រកថ្ងៃចុងខែ
         next_month = (month_start_dt.replace(day=28) + timedelta(days=4))
         month_end_date = next_month - timedelta(days=next_month.day)
         month_end_dt = datetime.combine(month_end_date, datetime.max.time())
@@ -535,7 +526,7 @@ async def health_check(request):
     logger.info("Render health check successful.")
     return web.Response(text="Bot is running and healthy!")
 
-# --- មុខងារ Main ត្រូវបានកែសម្រួល ---
+# --- មុខងារ Main ---
 
 async def main_async():
     """ចាប់ផ្ដើម Bot និង Web Server ក្នុងពេលតែមួយ"""
