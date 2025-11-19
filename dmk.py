@@ -17,7 +17,7 @@ def home():
     return "Bot is running successfully on Render!"
 
 def run_http():
-    port = int(os.environ.get("PORT", 8080))F
+    port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
@@ -258,10 +258,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "Chat នេះ"
     welcome_text = (
         f"សួស្តី! ស្វាគមន៍មកកាន់ **DMK Magic System**! 🤖✨\n\n"
-        f"ខ្ញុំគឺជាជំនួយការឆ្លាតវៃសម្រាប់កត់ត្រា និងបូកសរុបចំណូល (USD & KHR) ក្នុង **{chat_title}** ដោយស្វ័យប្រវត្តិ។ 💸\n"
+        f"ខ្ញុំគឺជាជំនួយការឆ្លាតវៃសម្រាប់កត់ត្រា និងបូកសរុបចំណូល (USD & KHR) ក្នុង **{chat_title}** ដោយស្វ័យប្រវត្តិ។ 💸\n\n"
         "💡 ប្រសិនបើមានចម្ងល់ និងបញ្ហាសូមទាក់ទងទៅកាន់ **@OUDOM333**\n\n"
 
         "សូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម 👇\n\n"
+        
     )
     if update.message: await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
     elif update.callback_query: await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
