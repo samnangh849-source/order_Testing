@@ -2,9 +2,27 @@ import logging
 import re
 import sqlite3
 import os
+from threading import Thread
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from flask import Flask
+
+# --- ផ្នែក FAKE WEB SERVER (សម្រាប់ RENDER) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running successfully on Render!"
+
+def run_http():
+    # Render នឹងផ្តល់ PORT តាម Environment Variable. បើអត់មានប្រើ 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_http)
+    t.start()
 
 # --- ផ្នែក GOOGLE SHEETS LIBRARIES ---
 try:
@@ -16,8 +34,6 @@ except ImportError:
     print("⚠️ មិនមាន Library 'gspread' ទេ។")
 
 # --- ការកំណត់ (CONFIGURATION) ---
-# នៅលើ Render យើងគួរប្រើ Environment Variable សម្រាប់ Token (សុវត្ថិភាព)
-# ប៉ុន្តែដាក់ផ្ទាល់ក៏បានសម្រាប់អ្នកចាប់ផ្តើម
 BOT_TOKEN = "8458218985:AAE9UWFW-EDqEivuP9MjGICI_9ipAaMgn2Y" 
 GOOGLE_SHEET_NAME = "DMK Finance Data"
 CREDENTIALS_FILE = "credentials.json"
@@ -52,13 +68,14 @@ def init_db():
 # --- ផ្នែក GOOGLE SHEETS FUNCTION ---
 def get_google_client():
     if not HAS_GSHEET_LIB or not os.path.exists(CREDENTIALS_FILE):
+        logging.error("រកមិនឃើញ credentials.json ទេ។")
         return None
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        logging.error(f"GSheet Auth Error: {e}")
+        logging.error(f"GSheet Auth Error (JWT): {e}")
         return None
 
 def log_to_google_sheet(chat_id, amount, currency, date_str, raw_message):
@@ -81,10 +98,10 @@ def log_to_google_sheet(chat_id, amount, currency, date_str, raw_message):
     except Exception as e:
         logging.error(f"❌ Google Sheet Error: {e}")
 
-# --- មុខងារ RESTORE (Manual & Auto) ---
+# --- មុខងារ RESTORE (Auto) ---
 def sync_from_google_sheet():
     client = get_google_client()
-    if not client: return 0, "រកមិនឃើញ credentials.json ឬ Library បញ្ហា"
+    if not client: return 0, "Auth Failed (ពិនិត្យ credentials.json)"
 
     try:
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
@@ -93,13 +110,11 @@ def sync_from_google_sheet():
         c = conn.cursor()
         
         count = 0
-        # រំលង Header (ជួរទី 1) បើមាន
         start_index = 1 if len(rows) > 0 and rows[0][0] == 'Date' else 0
 
         for row in rows[start_index:]:
             if len(row) < 6: continue
             try:
-                # [0:Date, 1:Time, 2:Amount, 3:Currency, 4:ChatID, 5:Message]
                 dt_str = f"{row[0]} {row[1]}"
                 dt_obj = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
                 amount = float(row[2])
@@ -107,7 +122,6 @@ def sync_from_google_sheet():
                 chat_id = int(row[4])
                 raw_message = row[5]
                 
-                # Check ស្ទួន
                 c.execute("SELECT id FROM transactions WHERE chat_id=? AND transaction_date=? AND amount=?", 
                           (chat_id, dt_obj, amount))
                 if c.fetchone(): continue 
@@ -124,10 +138,6 @@ def sync_from_google_sheet():
         return 0, str(e)
 
 def auto_restore_if_empty():
-    """
-    មុខងារពិសេសសម្រាប់ Render:
-    ពិនិត្យមើលថាបើ DB ទទេ (ទើប Restart) ឱ្យ Restore ស្វ័យប្រវត្តិ
-    """
     try:
         conn = sqlite3.connect('transactions.db')
         c = conn.cursor()
@@ -136,11 +146,11 @@ def auto_restore_if_empty():
         conn.close()
 
         if count == 0:
-            logging.info("⚠️ Database is empty (Possible Render Restart). Starting Auto-Restore...")
+            logging.info("⚠️ Database is empty. Starting Auto-Restore...")
             restored_count, msg = sync_from_google_sheet()
-            logging.info(f"✅ Auto-Restore complete: {restored_count} transactions recovered. ({msg})")
+            logging.info(f"✅ Auto-Restore result: {restored_count} items. Msg: {msg}")
         else:
-            logging.info(f"ℹ️ Database initialized with {count} existing transactions.")
+            logging.info(f"ℹ️ Database has {count} records.")
             
     except Exception as e:
         logging.error(f"Auto-restore check failed: {e}")
@@ -156,7 +166,6 @@ def save_transaction(chat_id, amount, currency, date_str, raw_message):
         conn.commit()
         conn.close()
         
-        # Save ទៅ Google Sheet ផងដែរ
         log_to_google_sheet(chat_id, amount, currency, date_str, raw_message)
         return True
     except Exception as e:
@@ -240,7 +249,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query: await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ បង្ខំអោយទាញទិន្នន័យពី Google Sheet (Manual Force)...")
+    await update.message.reply_text("⏳ Render កំពុងទាញទិន្នន័យពី Google Sheet មកវិញ...")
     count, msg = sync_from_google_sheet()
     if count > 0:
         await update.message.reply_text(f"✅ **Restore ជោគជ័យ!**\nបានទាញយក **{count}** ប្រតិបត្តិការមកវិញ។", parse_mode='Markdown')
@@ -280,13 +289,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'nav_year':
         years = get_available_years(chat_id)
         if not years:
-            await query.edit_message_text("❌ **មិនទាន់មានទិន្នន័យ។**\n(Auto-restore ប្រហែលជាកំពុងដំណើរការ ឬ GSheet ទទេ)", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='back_main')]]))
+            await query.edit_message_text("❌ **មិនទាន់មានទិន្នន័យ។**\n(Render ប្រហែលជាបានលុប DB ហើយ។ សូមចុច `/restore` ដើម្បីទាញមកវិញ)", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='back_main')]]))
             return
         buttons = [[InlineKeyboardButton(f"ឆ្នាំ {y}", callback_data=f"nav_month:{y}")] for y in years]
         buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='back_main')])
         await query.edit_message_text("📅 **សូមជ្រើសរើសឆ្នាំ:**", reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
 
-    # ... (កូដ Month/Day/Hour/Min ដូចគ្នា) ...
     elif action == 'nav_month':
         year = data[1]; months = get_available_months(chat_id, year)
         month_names = {"01":"Jan","02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun","07":"Jul","08":"Aug","09":"Sep","10":"Oct","11":"Nov","12":"Dec"}
@@ -377,19 +385,24 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'help':
         help_text = (
             "📖 **ការប្រើប្រាស់លើ Render**\n\n"
-            "🤖 **ប្រភេទ Bot:** Hybrid (SQLite + Google Sheet)\n"
-            "⚙️ **Auto-Restore:** បើកដំណើរការ។\n\n"
-            "រាល់ពេល Render Restart ហើយលុប DB ចោល, Bot នឹងទាញទិន្នន័យពី Google Sheet មកវិញដោយស្វ័យប្រវត្តិ។\n\n"
+            "⚠️ **ចំណាំ:** Render (Free) នឹងលុប Database ចោលពេល Restart។\n\n"
+            "**ដំណោះស្រាយ:**\n"
+            "1. Bot នឹងរក្សាទុកក្នុង Google Sheet ផងដែរ។\n"
+            "2. បើបាត់ទិន្នន័យ សូមវាយ command **`/restore`**\n"
+            "3. Bot នឹងទាញទិន្នន័យពី Google Sheet មកវិញភ្លាម។\n\n"
             "📞 ជំនួយ: **@OUDOM333**"
         )
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='back_main')]]), parse_mode='Markdown')
 
 if __name__ == '__main__':
     init_db()
+    # បើក Fake Web Server ដើម្បីកុំអោយ Render បិទ Bot ចោល
+    keep_alive()
+    
     # ហៅមុខងារពិនិត្យមើល និង Restore ដោយស្វ័យប្រវត្តិមុនពេល Start Bot
     auto_restore_if_empty()
     
-    print("Bot started on Render (Hybrid Mode with Auto-Restore)...")
+    print("Bot started on Render (Hybrid Mode with Auto-Restore + Fake Web Server)...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('restore', restore_command))
