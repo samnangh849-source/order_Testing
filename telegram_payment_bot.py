@@ -34,9 +34,8 @@ COLLECTION_NAME = "transactions" # ឈ្មោះ Collection ក្នុង Fi
 CAMBODIA_TIME_OFFSET = 7
 
 # --- កូដ Regex និងទម្រង់កាលបរិច្ឆេទ ---
-# (*** បានកែសម្រួល Regex ដើម្បីធានាថាវាចាប់យកសារបានត្រឹមត្រូវ ***)
-# ប្រើ ^\s* ដើម្បីចាប់យក Space/Newline នៅដើមសារ (Safe Check)
-# ប្រើ .*?on\s* ដើម្បីចាប់យកអក្សរនៅកណ្តាល និងត្រូវនឹង 'on' ដែលប្រហែលគ្មាន Space
+# (*** ធ្វើឱ្យ Regex តម្រូវវត្តមានម៉ោងឡើងវិញ ***)
+# ឥឡូវនេះ Regex តម្រូវឱ្យមានទាំង ថ្ងៃ និង ម៉ោង (DD-Mon-YYYY HH:MM[AM/PM]) 
 TRANSACTION_REGEX = r"^\s*Received ([\d\.,]+) (USD|KHR).*?on\s*(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}[AP]M)"
 DATE_FORMAT_IN = "%d-%b-%Y %I:%M%p" 
 DATE_FORMAT_QUERY = "%Y-%m-%d"
@@ -133,6 +132,7 @@ def _get_sum_sync(chat_id: int, start_dt: datetime, end_dt: datetime) -> dict:
         collection_ref = db.collection(COLLECTION_NAME)
         
         # បង្កើត query (តម្រូវការ Index)
+        # Note: Firestore នឹងបង្ហាញ warning ថាគួរប្រើ filter() ជំនួស where()
         query = collection_ref.where("chat_id", "==", chat_id) \
                               .where("timestamp", ">=", start_dt) \
                               .where("timestamp", "<=", end_dt)
@@ -198,7 +198,10 @@ async def show_main_menu(chat_id: int, context: ContextTypes.DEFAULT_TYPE, text:
 
 
 async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ស្តាប់រាល់សារទាំងអស់ក្នុង Group ដើម្បីចាប់យកប្រតិបត្តិការ"""
+    """
+    (*** បានកែសម្រួល: បន្ថែម Logging សម្រាប់ពិនិត្យ Regex Match ***)
+    ស្តាប់រាល់សារទាំងអស់ក្នុង Group ដើម្បីចាប់យកប្រតិបត្តិការ
+    """
 
     if not update.message or not update.message.text:
         return
@@ -208,24 +211,29 @@ async def listen_to_messages(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text
     chat_id = update.message.chat_id
     
-    # ប្រើ TRANSACTION_REGEX ដែលបានកែសម្រួលចុងក្រោយ
+    # ប្រើ TRANSACTION_REGEX ដែលបានកែសម្រួលចុងក្រោយ (តម្រូវឱ្យមានម៉ោង)
     match = re.search(TRANSACTION_REGEX, text, re.IGNORECASE)
     
     if match:
+        logger.debug("REGEX MATCH SUCCESSFUL. Extracting data.") # <-- NEW: SUCCESS LOG
         try:
             amount_str = match.group(1).replace(",", "")
             amount = float(amount_str)
             
             currency = match.group(2).upper()
-            date_str = match.group(3)
+            date_time_str = match.group(3) # នេះជាថ្ងៃ និងម៉ោងពេញលេញ (DD-Mon-YYYY HH:MM[AM/PM])
             
-            dt_obj = datetime.strptime(date_str, DATE_FORMAT_IN)
+            # ប្រើទម្រង់ពេញលេញដែលត្រូវនឹង DATE_FORMAT_IN
+            dt_obj = datetime.strptime(date_time_str, DATE_FORMAT_IN)
             
             logger.info(f"DEBUG: កំពុងបញ្ជូនទិន្នន័យទៅ Firestore: {amount} {currency} at {dt_obj}")
             await add_transaction_db(chat_id, amount, currency, dt_obj)
             
         except Exception as e:
             logger.error(f"Failed to parse or add transaction: {e}\nText: {text}")
+    else:
+        # <-- NEW: FAILURE LOG
+        logger.info(f"REGEX MATCH FAILED for text: {text[:50].strip()}...")
 
 # --- មុខងារ Command /sum ---
 async def handle_sum_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,10 +293,10 @@ async def handle_sum_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         # បើរកមិនឃើញទម្រង់ណាមួយ
-        await update.message.reply_text("ទម្រង់ Command មិនត្រឹមត្រូវ។\nឧ: /sum 2025-11-13\nឬ /sum 2025-11")
+        await update.message.reply_text("ទម្រង់ Command មិនត្រឹមត្រូវទេ។\nឧ: /sum 2025-11-13\nឬ /sum 2025-11")
     
     except ValueError:
-        await update.message.reply_text("កាលបរិច្ឆេទមិនត្រឹមត្រូវ។")
+        await update.message.reply_text("កាលបរិច្ឆេទមិនត្រឹមត្រូវទេ។")
     except Exception as e:
         logger.error(f"Error in handle_sum_command: {e}")
         await update.message.reply_text("មានបញ្ហាក្នុងការដំណើរការ Command។")
@@ -457,7 +465,7 @@ async def handle_get_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
         month_end_date = next_month - timedelta(days=next_month.day)
         month_end_dt = datetime.combine(month_end_date, datetime.max.time())
         
-        totals = await get_sum_db(update.message.chat_id, month_start_dt, month_end_dt)
+        totals = await get_sum_db(chat_id, month_start_dt, month_end_dt)
         prefix = f"សរុបទឹកប្រាក់ (ខែ {month_str})"
         message = format_totals_message(prefix, totals)
         
@@ -573,11 +581,9 @@ async def main_async():
         logger.info("Initializing Bot...")
         await application.initialize()
         
-        # *** ការកែសម្រួលដើម្បីដោះស្រាយ Conflict Error ***
         # លុប Webhook ចាស់ចេញពី Server Telegram មុននឹងចាប់ផ្តើម Polling
         await application.bot.delete_webhook()
         logger.info("Successfully deleted old webhooks.")
-        # **********************************************
 
         await application.start()
         await application.updater.start_polling()
@@ -607,7 +613,7 @@ async def main_async():
         logger.info("Shutting down...")
         await application.updater.stop()
         await application.stop()
-        await runner.cleanup() # ត្រូវតែ Clean up ក្រោយ application.stop()
+        await runner.cleanup() 
 
 # --- របៀបរត់ Main ---
 if __name__ == "__main__":
@@ -615,7 +621,6 @@ if __name__ == "__main__":
         asyncio.run(main_async())
     except RuntimeError as e:
         if "can't register atexit" in str(e):
-             # នេះជា Error ដែលទាក់ទងនឹង Render/Asyncio Clean up មិនមែនជាបញ្ហាមុខងារទេ
              logger.warning("Ignoring atexit error during Render shutdown.")
         else:
              logger.critical(f"Critical asyncio error: {e}")
