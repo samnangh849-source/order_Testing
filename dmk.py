@@ -18,7 +18,7 @@ except ImportError:
 # --- ការកំណត់ (CONFIGURATION) ---
 # នៅលើ Render យើងគួរប្រើ Environment Variable សម្រាប់ Token (សុវត្ថិភាព)
 # ប៉ុន្តែដាក់ផ្ទាល់ក៏បានសម្រាប់អ្នកចាប់ផ្តើម
-BOT_TOKEN = "8251257361:AAGz_QLrrskQYD6hGoNhjak4KZAKUaqwZCw" 
+BOT_TOKEN = "8458218985:AAE9UWFW-EDqEivuP9MjGICI_9ipAaMgn2Y" 
 GOOGLE_SHEET_NAME = "DMK Finance Data"
 CREDENTIALS_FILE = "credentials.json"
 
