@@ -2,6 +2,7 @@ import logging
 import re
 import sqlite3
 import os
+import json  # បន្ថែម library json
 from threading import Thread
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -16,7 +17,6 @@ def home():
     return "Bot is running successfully on Render!"
 
 def run_http():
-    # Render នឹងផ្តល់ PORT តាម Environment Variable. បើអត់មានប្រើ 8080
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
@@ -34,9 +34,9 @@ except ImportError:
     print("⚠️ មិនមាន Library 'gspread' ទេ។")
 
 # --- ការកំណត់ (CONFIGURATION) ---
-BOT_TOKEN = "8458218985:AAE9UWFW-EDqEivuP9MjGICI_9ipAaMgn2Y" 
+BOT_TOKEN = "8458218985:AAE9UWFW-EDqEivuP9MjGICI_9ipAaMgn2Y"  # ឬប្រើ os.environ.get("BOT_TOKEN") ក៏បាន
 GOOGLE_SHEET_NAME = "DMK Finance Data"
-CREDENTIALS_FILE = "credentials.json"
+CREDENTIALS_FILE = "credentials.json" # សម្រាប់ Local testing
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -65,17 +65,35 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- ផ្នែក GOOGLE SHEETS FUNCTION ---
+# --- ផ្នែក GOOGLE SHEETS FUNCTION (កែសម្រួលថ្មី) ---
 def get_google_client():
-    if not HAS_GSHEET_LIB or not os.path.exists(CREDENTIALS_FILE):
-        logging.error("រកមិនឃើញ credentials.json ទេ។")
+    if not HAS_GSHEET_LIB:
+        logging.error("Library gspread មិនទាន់ដំឡើង")
         return None
+
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        # 1. ព្យាយាមអានពី Environment Variable (Render)
+        json_creds = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        
+        if json_creds:
+            # បម្លែង String ទៅជា Dictionary
+            creds_dict = json.loads(json_creds)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # 2. បើអត់មាន Env Var, ព្យាយាមរកឯកសារ (Local Computer)
+        elif os.path.exists(CREDENTIALS_FILE):
+            creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        
+        else:
+            logging.error("រកមិនឃើញ Credentials ក្នុង ENV ឬ ឯកសារ JSON ទេ។")
+            return None
+
         return gspread.authorize(creds)
+
     except Exception as e:
-        logging.error(f"GSheet Auth Error (JWT): {e}")
+        logging.error(f"GSheet Auth Error: {e}")
         return None
 
 def log_to_google_sheet(chat_id, amount, currency, date_str, raw_message):
@@ -101,7 +119,7 @@ def log_to_google_sheet(chat_id, amount, currency, date_str, raw_message):
 # --- មុខងារ RESTORE (Auto) ---
 def sync_from_google_sheet():
     client = get_google_client()
-    if not client: return 0, "Auth Failed (ពិនិត្យ credentials.json)"
+    if not client: return 0, "Auth Failed"
 
     try:
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
@@ -241,7 +259,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"សួស្តី! ស្វាគមន៍មកកាន់ **DMK Magic System**! 🤖✨\n\n"
         f"ខ្ញុំដំណើរការលើ **Render (Cloud)** ☁️\n"
-        f"ប្រើប្រាស់ **Database Hybrid (Auto-Restore)** សម្រាប់ **{chat_title}**។\n\n"
+        f"ប្រើប្រាស់ **Secure Environment Variables**។\n\n"
         "សូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម 👇\n\n"
         "💡 ជំនួយ: **@OUDOM333**"
     )
@@ -396,13 +414,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     init_db()
-    # បើក Fake Web Server ដើម្បីកុំអោយ Render បិទ Bot ចោល
     keep_alive()
-    
-    # ហៅមុខងារពិនិត្យមើល និង Restore ដោយស្វ័យប្រវត្តិមុនពេល Start Bot
     auto_restore_if_empty()
-    
-    print("Bot started on Render (Hybrid Mode with Auto-Restore + Fake Web Server)...")
+    print("Bot started on Render (Hybrid Mode with Env Var Support)...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('restore', restore_command))
