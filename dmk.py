@@ -35,7 +35,7 @@ except ImportError:
     print("⚠️ មិនមាន Library 'gspread' ទេ។")
 
 # --- ការកំណត់ (CONFIGURATION) ---
-BOT_TOKEN = "8458218985:AAGUOXxAydg8HtbYNd4vbkzp2q_ih3K1JBo"
+BOT_TOKEN = "8458218985:AAFZPSi5HRciFEzjDzpZSoLqV4JmFrvOCwk"
 GOOGLE_SHEET_NAME = "DMK Finance Data"
 CREDENTIALS_FILE = "credentials.json"
 
