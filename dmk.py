@@ -3,9 +3,9 @@ import re
 import sqlite3
 import os
 import json
-import calendar # បន្ថែម calendar
+import calendar
 from threading import Thread
-from datetime import datetime, timedelta # បន្ថែម timedelta
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ChatMemberHandler
 from flask import Flask
@@ -35,7 +35,7 @@ except ImportError:
     print("⚠️ មិនមាន Library 'gspread' ទេ។")
 
 # --- ការកំណត់ (CONFIGURATION) ---
-BOT_TOKEN = "8458218985:AAFZPSi5HRciFEzjDzpZSoLqV4JmFrvOCwk"
+BOT_TOKEN = "8458218985:AAGLTb7lRmogjBiOvR450R4EDjdu5EHLKyw"
 GOOGLE_SHEET_NAME = "DMK Finance Data"
 CREDENTIALS_FILE = "credentials.json"
 
@@ -165,7 +165,6 @@ def get_available_years(chat_id):
     conn = sqlite3.connect('transactions.db'); c = conn.cursor()
     c.execute("SELECT DISTINCT strftime('%Y', transaction_date) FROM transactions WHERE chat_id = ? ORDER BY 1", (chat_id,))
     years = [row[0] for row in c.fetchall()]; conn.close(); return years
-# (Functions for Month/Day/Time are similar, abbreviated to save space but logic remains same as previous file)
 def get_available_months(chat_id, y): 
     conn=sqlite3.connect('transactions.db');c=conn.cursor();c.execute("SELECT DISTINCT strftime('%m', transaction_date) FROM transactions WHERE chat_id=? AND strftime('%Y', transaction_date)=? ORDER BY 1",(chat_id,y));r=[x[0] for x in c.fetchall()];conn.close();return r
 def get_available_days(chat_id, y, m): 
@@ -193,21 +192,12 @@ def get_keyboard_with_delete(buttons=None):
 # --- HANDLERS ---
 
 async def track_chat_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    ចាប់យក Group ID ស្វ័យប្រវត្តិនៅពេល Bot ត្រូវបាន Add ចូល Group
-    ទោះបីជាមិនទាន់ជា Admin ក៏ដោយ។
-    """
     result = update.my_chat_member
     if not result: return
-
     chat = result.chat
     new_status = result.new_chat_member.status
-    
-    # Bot ត្រូវបាន Add ចូល ឬ Promote
     if new_status in ['member', 'administrator']:
         logging.info(f"🤖 Bot joined/promoted in chat: {chat.title} (ID: {chat.id})")
-        # អាច Save chat_id ទុកក្នុង DB ប្រសិនបើត្រូវការប្រើពេលក្រោយ
-        # ប៉ុន្តែសម្រាប់ពេលនេះ គ្រាន់តែ Log គឺគ្រប់គ្រាន់ដើម្បីដឹង ID
 
 async def delete_msg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """លុបសារនៅពេលចុចប៊ូតុង 🗑️"""
@@ -245,10 +235,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ កំពុងទាញទិន្នន័យពី Google Sheet...")
     count, msg = sync_from_google_sheet()
-    
-    # បង្កើតប៊ូតុងលុបសម្រាប់សារ Restore
     reply_markup = get_keyboard_with_delete()
-    
     if count > 0:
         await update.message.reply_text(f"✅ **Restore ជោគជ័យ!**\nបានទាញយក **{count}** ប្រតិបត្តិការ។", reply_markup=reply_markup, parse_mode='Markdown')
     else:
@@ -263,7 +250,6 @@ async def handle_incoming_message(update: Update, context: ContextTypes.DEFAULT_
         amount, currency, date_str = parsed
         if save_transaction(chat_id, amount, currency, date_str, text):
             print(f"✅ [{chat_id}] Saved: {amount} {currency}")
-            # ឆ្លើយតបថាបាន Save ជោគជ័យ ជាមួយប៊ូតុងលុប
             reply_markup = get_keyboard_with_delete()
             await update.message.reply_text(
                 f"✅ **កត់ត្រាទុក!**\n💰 `{amount:,.2f} {currency}`\n📅 `{date_str}`",
@@ -274,12 +260,16 @@ async def handle_incoming_message(update: Update, context: ContextTypes.DEFAULT_
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = update.effective_chat.id
-    # មិនបាច់ answer() ត្រង់នេះទេ ព្រោះនឹង edit ខាងក្រោម
-    data = query.data.split(':'); action = data[0]; 
     
-    # 🔥 កែសម្រួល: កំណត់ម៉ោងអោយត្រូវនឹងកម្ពុជា (UTC+7)
-    # ដោយសារ Server អាចជា UTC, យើងបូក 7 ម៉ោងបន្ថែម
-    now = datetime.now() + timedelta(hours=7)
+    # ប្រើ try-except ដើម្បីការពារ Error ពេល split data
+    try:
+        data = query.data.split(':')
+        action = data[0]
+    except:
+        await query.answer()
+        return
+
+    now = datetime.now() + timedelta(hours=7) # UTC+7
 
     if action == 'delete_msg':
         await delete_msg_callback(update, context)
@@ -288,8 +278,39 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     back_btn = [InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='back_main')]
+    nav_btns_template = [[InlineKeyboardButton("🔄 គណនាម្តងទៀត", callback_data='nav_year'), InlineKeyboardButton("🏠 ម៉ឺនុយដើម", callback_data='back_main')]]
 
-    if action == 'sum_today':
+    # --- MENU: HELP & CHECK ID ---
+    if action == 'help':
+        # បន្ថែមប៊ូតុង Check ID ចូលក្នុងម៉ឺនុយ Help
+        help_btns = [
+            [InlineKeyboardButton("🆔 មើល Group ID", callback_data='check_id')],
+            [InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='back_main')]
+        ]
+        help_text = (
+            "📖 **DMK Magic System (Render)**\n\n"
+            "🗑️ **ប៊ូតុងលុប:** គ្រប់សារទាំងអស់ឥឡូវនេះអាចលុបបានដោយចុច 'បិទ (Close)'។\n"
+            "🤖 **Group ID:** ចុចប៊ូតុងខាងក្រោមដើម្បីមើល ID របស់ Group នេះ។\n"
+            "📥 **Auto-Restore:** ទិន្នន័យត្រូវបានការពារមិនអោយបាត់។\n\n"
+            "📞 ជំនួយ: **@OUDOM333**"
+        )
+        await query.edit_message_text(help_text, reply_markup=get_keyboard_with_delete(help_btns), parse_mode='Markdown')
+        return
+
+    elif action == 'check_id':
+        # បង្ហាញ Group ID
+        chat_title = update.effective_chat.title or "Chat នេះ"
+        id_text = (
+            f"🆔 **ព័ត៌មាន Group:**\n\n"
+            f"📛 ឈ្មោះ: **{chat_title}**\n"
+            f"🔢 ID: `{chat_id}`\n\n"
+            "*(សូមចុច Copy លេខ ID នេះទុកប្រសិនបើត្រូវការ)*"
+        )
+        await query.edit_message_text(id_text, reply_markup=get_keyboard_with_delete([back_btn]), parse_mode='Markdown')
+        return
+
+    # --- SHORTCUTS ---
+    elif action == 'sum_today':
         start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_dt = now.replace(hour=23, minute=59, second=59, microsecond=999999)
         totals, count = get_sum_by_exact_range(chat_id, start_dt, end_dt)
@@ -297,18 +318,16 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=get_keyboard_with_delete([back_btn]), parse_mode='Markdown')
     
     elif action == 'sum_month':
-        # កំណត់ថ្ងៃចាប់ផ្តើម: ថ្ងៃទី 1 នៃខែនេះ ម៉ោង 00:00
         start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
-        # 🔥 កែសម្រួល: កំណត់ថ្ងៃបញ្ចប់អោយដល់ដាច់ខែ (មិនមែនត្រឹម now ទេ)
-        # រកថ្ងៃចុងក្រោយនៃខែ (ឧ. 30 ឬ 31)
         last_day = calendar.monthrange(now.year, now.month)[1]
         end_dt = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
-        
         totals, count = get_sum_by_exact_range(chat_id, start_dt, end_dt)
         msg = f"🗓️ **បូកសរុបខែនេះ ({start_dt.strftime('%B-%Y')})**\n\n{format_amount_text(totals)}\n\n📝 ចំនួនប្រតិបត្តិការ: `{count}`"
         await query.edit_message_text(msg, reply_markup=get_keyboard_with_delete([back_btn]), parse_mode='Markdown')
 
+    # --- FULL RANGE SEARCH (START DATE -> END DATE) ---
+    
+    # 1. Start Year
     elif action == 'nav_year':
         years = get_available_years(chat_id)
         if not years:
@@ -316,8 +335,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         buttons = [[InlineKeyboardButton(f"ឆ្នាំ {y}", callback_data=f"nav_month:{y}")] for y in years]
         buttons.append(back_btn)
-        await query.edit_message_text("📅 **សូមជ្រើសរើសឆ្នាំ:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+        await query.edit_message_text("📅 **សូមជ្រើសរើស ឆ្នាំចាប់ផ្ដើម:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
 
+    # 2. Start Month
     elif action == 'nav_month':
         year = data[1]; months = get_available_months(chat_id, year)
         month_names = {"01":"Jan","02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun","07":"Jul","08":"Aug","09":"Sep","10":"Oct","11":"Nov","12":"Dec"}
@@ -328,8 +348,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(row)==3: buttons.append(row); row=[]
         if row: buttons.append(row)
         buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data='nav_year')])
-        await query.edit_message_text(f"🗓️ **ឆ្នាំ {year} - សូមជ្រើសរើសខែ:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+        await query.edit_message_text(f"🗓️ **{year} - សូមជ្រើសរើស ខែចាប់ផ្ដើម:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
 
+    # 3. Start Day
     elif action == 'nav_day':
         year, month = data[1], data[2]; days = get_available_days(chat_id, year, month)
         buttons = []; row = []
@@ -338,87 +359,141 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(row)==5: buttons.append(row); row=[]
         if row: buttons.append(row)
         buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_month:{year}")])
-        await query.edit_message_text(f"📅 **ខែ {month}/{year} - សូមជ្រើសរើសថ្ងៃ:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+        await query.edit_message_text(f"📅 **{month}/{year} - សូមជ្រើសរើស ថ្ងៃចាប់ផ្ដើម:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
     
-    # (កាត់ខ្លីផ្នែក Hour/Min ដើម្បីសន្សំ Space តែ Logic នៅដដែល និងប្រើ get_keyboard_with_delete ទាំងអស់)
+    # 4. Start Hour
     elif action == 'nav_sh':
         year, month, day = data[1], data[2], data[3]; hours = get_available_hours(chat_id, f"{year}-{month}-{day}")
         buttons = []; row = []
         for h in hours:
+            # បញ្ជូនទៅ nav_sm (Start Minute)
             row.append(InlineKeyboardButton(f"{h}:XX", callback_data=f"nav_sm:{year}:{month}:{day}:{h}")); 
             if len(row)==4: buttons.append(row); row=[]
         if row: buttons.append(row)
         buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_day:{year}:{month}")])
         await query.edit_message_text(f"⏰ **{day}/{month}/{year}**\nសូមជ្រើសរើស **ម៉ោងចាប់ផ្ដើម**:", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+
+    # 5. Start Minute -> ចូលទៅរើស End Year
     elif action == 'nav_sm':
         year, month, day, h_start = data[1], data[2], data[3], data[4]; mins = get_available_minutes(chat_id, f"{year}-{month}-{day}", h_start)
         buttons = []; row = []
         for m in mins:
-            row.append(InlineKeyboardButton(f":{m}", callback_data=f"nav_eh:{year}:{month}:{day}:{h_start}:{m}")); 
+            # បញ្ជូនទៅ nav_ey (End Year) ជាជំហានបន្ទាប់
+            # Data: nav_ey:SY:SM:SD:SH:SMin
+            row.append(InlineKeyboardButton(f":{m}", callback_data=f"nav_ey:{year}:{month}:{day}:{h_start}:{m}")); 
             if len(row)==4: buttons.append(row); row=[]
         if row: buttons.append(row)
         buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_sh:{year}:{month}:{day}")])
         await query.edit_message_text(f"⏰ **ម៉ោង {h_start}:XX**\nសូមជ្រើសរើស **នាទីចាប់ផ្ដើម**:", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
-    elif action == 'nav_eh':
-        year, month, day, h_start, m_start = data[1], data[2], data[3], data[4], data[5]; all_hours = get_available_hours(chat_id, f"{year}-{month}-{day}")
-        buttons = []; row = []
-        for h in all_hours:
-            if int(h)>=int(h_start): row.append(InlineKeyboardButton(f"{h}:XX", callback_data=f"nav_em:{year}:{month}:{day}:{h_start}:{m_start}:{h}")); 
-            if len(row)==4: buttons.append(row); row=[]
-        if row: buttons.append(row)
-        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_sm:{year}:{month}:{day}:{h_start}")])
-        await query.edit_message_text(f"🏁 **ចាប់ផ្ដើមពី {h_start}:{m_start}**\nសូមជ្រើសរើស **ម៉ោងបញ្ចប់**:", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
-    elif action == 'nav_em':
-        year, month, day, h_start, m_start, h_end = data[1:]
-        all_mins = get_available_minutes(chat_id, f"{year}-{month}-{day}", h_end); buttons = []
-        buttons.append([InlineKeyboardButton("⚡ គិតត្រឹមពេលនេះ (Now)", callback_data=f"calc_now:{year}:{month}:{day}:{h_start}:{m_start}")])
-        row = []
-        for m in all_mins:
-            if h_start==h_end and int(m)<int(m_start): continue
-            row.append(InlineKeyboardButton(f":{m}", callback_data=f"calc:{year}:{month}:{day}:{h_start}:{m_start}:{h_end}:{m}"))
-            if len(row)==4: buttons.append(row); row=[]
-        if row: buttons.append(row)
-        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_eh:{year}:{month}:{day}:{h_start}:{m_start}")])
-        await query.edit_message_text(f"🏁 **ដល់ម៉ោង {h_end}:XX**\nសូមជ្រើសរើស **នាទីបញ្ចប់**:", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
 
+    # 6. End Year
+    elif action == 'nav_ey':
+        # Data: nav_ey:SY:SM:SD:SH:SMin
+        sy, sm, sd, sh, smin = data[1], data[2], data[3], data[4], data[5]
+        years = get_available_years(chat_id) # យកឆ្នាំទាំងអស់ដែលមាន
+        buttons = []; row = []
+        for y in years:
+            if y >= sy: # បង្ហាញតែឆ្នាំដែលធំជាងឬស្មើឆ្នាំចាប់ផ្តើម
+                row.append(InlineKeyboardButton(f"ឆ្នាំ {y}", callback_data=f"nav_emo:{sy}:{sm}:{sd}:{sh}:{smin}:{y}"))
+                if len(row)==3: buttons.append(row); row=[]
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_sm:{sy}:{sm}:{sd}:{sh}")]) # Back to Start Min
+        await query.edit_message_text("📅 **សូមជ្រើសរើស ឆ្នាំបញ្ចប់:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+
+    # 7. End Month
+    elif action == 'nav_emo':
+        # Data: nav_emo:SY:SM:SD:SH:SMin:EY
+        sy, sm, sd, sh, smin, ey = data[1:7]
+        months = get_available_months(chat_id, ey)
+        month_names = {"01":"Jan","02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun","07":"Jul","08":"Aug","09":"Sep","10":"Oct","11":"Nov","12":"Dec"}
+        buttons = []; row = []
+        for m in months:
+            # បើឆ្នាំដូចគ្នា ត្រូវរើសខែដែលធំជាងឬស្មើខែចាប់ផ្តើម
+            if ey == sy and m < sm: continue
+            m_name = month_names.get(m, m)
+            row.append(InlineKeyboardButton(f"{m_name}", callback_data=f"nav_ed:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}:{m}"))
+            if len(row)==3: buttons.append(row); row=[]
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_ey:{sy}:{sm}:{sd}:{sh}:{smin}")])
+        await query.edit_message_text(f"🗓️ **ឆ្នាំ {ey} - សូមជ្រើសរើស ខែបញ្ចប់:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+
+    # 8. End Day
+    elif action == 'nav_ed':
+        # Data: nav_ed:SY:SM:SD:SH:SMin:EY:EM
+        sy, sm, sd, sh, smin, ey, em = data[1:8]
+        days = get_available_days(chat_id, ey, em)
+        buttons = []; row = []
+        for d in days:
+             # បើឆ្នាំនិងខែដូចគ្នា ត្រូវរើសថ្ងៃដែលធំជាងឬស្មើថ្ងៃចាប់ផ្តើម
+            if ey == sy and em == sm and d < sd: continue
+            row.append(InlineKeyboardButton(f"{d}", callback_data=f"nav_eh:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}:{em}:{d}"))
+            if len(row)==5: buttons.append(row); row=[]
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_emo:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}")])
+        await query.edit_message_text(f"📅 **{em}/{ey} - សូមជ្រើសរើស ថ្ងៃបញ្ចប់:**", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+
+    # 9. End Hour
+    elif action == 'nav_eh':
+        # Data: nav_eh:SY:SM:SD:SH:SMin:EY:EM:ED
+        sy, sm, sd, sh, smin, ey, em, ed = data[1:9]
+        hours = get_available_hours(chat_id, f"{ey}-{em}-{ed}")
+        buttons = []; row = []
+        for h in hours:
+            # បើថ្ងៃដូចគ្នា ត្រូវរើសម៉ោងដែលធំជាងឬស្មើ
+            if ey==sy and em==sm and ed==sd and int(h)<int(sh): continue
+            row.append(InlineKeyboardButton(f"{h}:XX", callback_data=f"nav_emin:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}:{em}:{ed}:{h}")); 
+            if len(row)==4: buttons.append(row); row=[]
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_ed:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}:{em}")])
+        await query.edit_message_text(f"⏰ **{ed}/{em}/{ey}**\nសូមជ្រើសរើស **ម៉ោងបញ្ចប់**:", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+
+    # 10. End Minute -> Calc
+    elif action == 'nav_emin':
+        # Data: nav_emin:SY:SM:SD:SH:SMin:EY:EM:ED:EH
+        sy, sm, sd, sh, smin, ey, em, ed, eh = data[1:10]
+        mins = get_available_minutes(chat_id, f"{ey}-{em}-{ed}", eh)
+        buttons = []; row = []
+        
+        # ប៊ូតុង Now (គិតត្រឹមពេលនេះ)
+        buttons.append([InlineKeyboardButton("⚡ គិតត្រឹមពេលនេះ (Now)", callback_data=f"calc_now:{sy}:{sm}:{sd}:{sh}:{smin}")])
+        
+        for m in mins:
+            if ey==sy and em==sm and ed==sd and eh==sh and int(m)<int(smin): continue
+            row.append(InlineKeyboardButton(f":{m}", callback_data=f"calc:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}:{em}:{ed}:{eh}:{m}"))
+            if len(row)==4: buttons.append(row); row=[]
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton("🔙 ត្រឡប់ក្រោយ", callback_data=f"nav_eh:{sy}:{sm}:{sd}:{sh}:{smin}:{ey}:{em}:{ed}")])
+        await query.edit_message_text(f"🏁 **ដល់ម៉ោង {eh}:XX**\nសូមជ្រើសរើស **នាទីបញ្ចប់**:", reply_markup=get_keyboard_with_delete(buttons), parse_mode='Markdown')
+
+    # --- CALCULATE ---
     elif action == 'calc' or action == 'calc_now':
-        year, month, day, h_start, m_start = data[1], data[2], data[3], data[4], data[5]
-        start_dt = datetime.strptime(f"{year}-{month}-{day} {h_start}:{m_start}", "%Y-%m-%d %H:%M")
+        # Data for calc: calc:SY:SM:SD:SH:SMin:EY:EM:ED:EH:EMin
+        sy, sm, sd, sh, smin = data[1:6]
+        start_dt = datetime.strptime(f"{sy}-{sm}-{sd} {sh}:{smin}", "%Y-%m-%d %H:%M")
+        
         if action == 'calc_now':
-            temp_now = datetime.now() + timedelta(hours=7) # UTC+7
-            end_dt = temp_now if temp_now.strftime("%Y-%m-%d") == f"{year}-{month}-{day}" else datetime.strptime(f"{year}-{month}-{day} 23:59", "%Y-%m-%d %H:%M")
+            end_dt = datetime.now() + timedelta(hours=7)
             end_label = "បច្ចុប្បន្ន"
         else:
-            h_end, m_end = data[6], data[7]
-            end_dt = datetime.strptime(f"{year}-{month}-{day} {h_end}:{m_end}", "%Y-%m-%d %H:%M")
-            end_label = f"{h_end}:{m_end}"
+            ey, em, ed, eh, emin = data[6:11]
+            end_dt = datetime.strptime(f"{ey}-{em}-{ed} {eh}:{emin}", "%Y-%m-%d %H:%M")
+            end_label = f"{ed}-{em}-{ey} {eh}:{emin}"
         
         totals, count = get_sum_by_exact_range(chat_id, start_dt, end_dt)
-        msg = f"🔍 **លទ្ធផលស្វែងរក ({day}-{month}-{year})**\n🕒 ចាប់ពី: `{h_start}:{m_start}` ដល់ `{end_label}`\n-----------------------------\n{format_amount_text(totals)}\n\n📝 ចំនួនប្រតិបត្តិការ: `{count}`"
+        msg = f"🔍 **លទ្ធផលស្វែងរក**\n🕒 ចាប់ពី: `{sd}-{sm}-{sy} {sh}:{smin}`\n🏁 ដល់: `{end_label}`\n-----------------------------\n{format_amount_text(totals)}\n\n📝 ចំនួនប្រតិបត្តិការ: `{count}`"
         
-        nav_btns = [[InlineKeyboardButton("🔄 គណនាម្តងទៀត", callback_data='nav_year'), InlineKeyboardButton("🏠 ម៉ឺនុយដើម", callback_data='back_main')]]
-        await query.edit_message_text(msg, reply_markup=get_keyboard_with_delete(nav_btns), parse_mode='Markdown')
+        await query.edit_message_text(msg, reply_markup=get_keyboard_with_delete(nav_btns_template), parse_mode='Markdown')
 
     elif action == 'back_main': await start(update, context)
-    elif action == 'help':
-        help_text = (
-            "📖 **DMK Magic System (Render)**\n\n"
-            "🗑️ **ប៊ូតុងលុប:** គ្រប់សារទាំងអស់ឥឡូវនេះអាចលុបបានដោយចុច 'បិទ (Close)'។\n"
-            "🤖 **Group ID:** Bot នឹងស្គាល់ ID ដោយស្វ័យប្រវត្តិពេលចូល Group។\n"
-            "📥 **Auto-Restore:** ទិន្នន័យត្រូវបានការពារមិនអោយបាត់។\n\n"
-            "📞 ជំនួយ: **@OUDOM333**"
-        )
-        await query.edit_message_text(help_text, reply_markup=get_keyboard_with_delete([back_btn]), parse_mode='Markdown')
 
 if __name__ == '__main__':
     init_db()
     keep_alive()
     auto_restore_if_empty()
-    print("Bot started on Render (Hybrid + AutoID + DeleteBtn)...")
+    print("Bot started on Render (Hybrid + AutoID + CheckID + FullRangeSearch)...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Handlers
-    application.add_handler(ChatMemberHandler(track_chat_status, ChatMemberHandler.MY_CHAT_MEMBER)) # សម្រាប់ចាប់ Group ID ថ្មី
+    application.add_handler(ChatMemberHandler(track_chat_status, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('restore', restore_command))
     application.add_handler(CallbackQueryHandler(button_click))
