@@ -3,8 +3,9 @@ import re
 import sqlite3
 import os
 import json
+import calendar # បន្ថែម calendar
 from threading import Thread
-from datetime import datetime
+from datetime import datetime, timedelta # បន្ថែម timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ChatMemberHandler
 from flask import Flask
@@ -274,7 +275,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = update.effective_chat.id
     # មិនបាច់ answer() ត្រង់នេះទេ ព្រោះនឹង edit ខាងក្រោម
-    data = query.data.split(':'); action = data[0]; now = datetime.now()
+    data = query.data.split(':'); action = data[0]; 
+    
+    # 🔥 កែសម្រួល: កំណត់ម៉ោងអោយត្រូវនឹងកម្ពុជា (UTC+7)
+    # ដោយសារ Server អាចជា UTC, យើងបូក 7 ម៉ោងបន្ថែម
+    now = datetime.now() + timedelta(hours=7)
 
     if action == 'delete_msg':
         await delete_msg_callback(update, context)
@@ -292,8 +297,14 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=get_keyboard_with_delete([back_btn]), parse_mode='Markdown')
     
     elif action == 'sum_month':
+        # កំណត់ថ្ងៃចាប់ផ្តើម: ថ្ងៃទី 1 នៃខែនេះ ម៉ោង 00:00
         start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        end_dt = now
+        
+        # 🔥 កែសម្រួល: កំណត់ថ្ងៃបញ្ចប់អោយដល់ដាច់ខែ (មិនមែនត្រឹម now ទេ)
+        # រកថ្ងៃចុងក្រោយនៃខែ (ឧ. 30 ឬ 31)
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        end_dt = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+        
         totals, count = get_sum_by_exact_range(chat_id, start_dt, end_dt)
         msg = f"🗓️ **បូកសរុបខែនេះ ({start_dt.strftime('%B-%Y')})**\n\n{format_amount_text(totals)}\n\n📝 ចំនួនប្រតិបត្តិការ: `{count}`"
         await query.edit_message_text(msg, reply_markup=get_keyboard_with_delete([back_btn]), parse_mode='Markdown')
@@ -374,7 +385,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         year, month, day, h_start, m_start = data[1], data[2], data[3], data[4], data[5]
         start_dt = datetime.strptime(f"{year}-{month}-{day} {h_start}:{m_start}", "%Y-%m-%d %H:%M")
         if action == 'calc_now':
-            temp_now = datetime.now()
+            temp_now = datetime.now() + timedelta(hours=7) # UTC+7
             end_dt = temp_now if temp_now.strftime("%Y-%m-%d") == f"{year}-{month}-{day}" else datetime.strptime(f"{year}-{month}-{day} 23:59", "%Y-%m-%d %H:%M")
             end_label = "បច្ចុប្បន្ន"
         else:
@@ -391,7 +402,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'back_main': await start(update, context)
     elif action == 'help':
         help_text = (
-            "📖 **DMK Magic System**\n\n"
+            "📖 **DMK Magic System (Render)**\n\n"
             "🗑️ **ប៊ូតុងលុប:** គ្រប់សារទាំងអស់ឥឡូវនេះអាចលុបបានដោយចុច 'បិទ (Close)'។\n"
             "🤖 **Group ID:** Bot នឹងស្គាល់ ID ដោយស្វ័យប្រវត្តិពេលចូល Group។\n"
             "📥 **Auto-Restore:** ទិន្នន័យត្រូវបានការពារមិនអោយបាត់។\n\n"
